@@ -1,0 +1,530 @@
+
+`timescale 1ns/100ps
+`ifndef DISABLE_DEFAULT_NET
+`default_nettype none
+`endif
+
+module M1 (
+   input  logic		Clock,
+   input  logic		Resetn, 
+
+   input  logic		start,
+   output logic		done,
+	
+   input  logic   [15:0]   SRAM_read_data,
+   
+   output logic [17:0]	SRAM_address,
+   output logic [15:0]	SRAM_write_data,
+   output logic		SRAM_we_n,
+);
+
+typedef enum logic [4:0] {
+	S_IDLE,
+	
+	S_LEAD_IN0,
+	S_LEAD_IN1,
+	S_LEAD_IN2,
+	S_LEAD_IN3,
+	S_LEAD_IN4,
+	S_LEAD_IN5,
+	S_LEAD_IN6,
+	S_LEAD_IN7,
+	S_LEAD_IN8,
+	
+
+	S_COMMON_0,
+	S_COMMON_1,
+	S_COMMON_2,
+	S_COMMON_3,
+	S_COMMON_4,
+	S_COMMON_5,
+	S_COMMON_6,
+	S_COMMON_7,
+	
+	
+	S_LEAD_OUT0,
+	S_LEAD_OUT1,
+	S_LEAD_OUT2,
+	S_LEAD_OUT3,
+	S_LEAD_OUT4,
+	
+} M1_state;
+
+localparam base_memory_Y = 14'h0;
+localparam base_memory_U = 16'h13834;
+localparam base_memory_V = 16'h20736;
+localparam base_memory_RGB = 18'h220672;
+
+logic [14:0] memory_Y;
+logic [15:0] memory_U;
+logic [15:0] memory_V;
+logic [17:0] memory_RGB;
+
+logic [14:0] memory_offset_Y;
+logic [15:0] memory_offset_UV;
+logic [17:0] memory_offset_RGB;
+
+
+
+logic [7:0] U9_m, U7_m, U5_m, U3_m, U1_m;
+logic [7:0] U9_p, U7_p, U5_p, U3_p, U1_p;
+logic [7:0] V9_m, V7_m, V5_m, V3_m, V1_m;
+logic [7:0] V9_p, V7_p, V5_p, V3_p, V1_p;
+
+logic [7:0] Uodd;
+logic [7:0] Vodd;
+
+logic [7:0] U_prime_even, V_prime_even;
+
+logic [7:0] Ye, Yo;
+
+logic [31:0] M0, M1, M2, M3;
+logic [31:0] M0_buff, M1_buff, M2_buff, M3_buff;
+
+logic [31:0] accU_prime, accV_prime; //prime_odd on third partial
+
+logic [7:0] Re, Ro;
+logic [7:0] Ge, Go;
+logic [7:0] Be, Bo;
+
+logic even_cycle, new_row;
+logic [7:0] pixel_compute_counter;
+
+
+// Receive data 
+always_ff @ (posedge Clock or negedge Resetn) begin
+	if (~Resetn) begin
+		SRAM_we_n <= 1'b1;
+		SRAM_write_data <= 16'd0;
+		SRAM_address <= 18'd0;
+		
+		M1_SRAM_state <= S_IDLE;
+
+		U9_m <= 8'h0; U7_m <= 8'h0; U5_m <= 8'h0; U3_m <= 8'h0; U1_m <= 8'h0;
+		U1_p <= 8'h0; U3_p <= 8'h0; U5_p <= 8'h0; U7_p <= 8'h0; U9_p <= 8'h0;
+
+		V9_m <= 8'h0; V7_m <= 8'h0; V5_m <= 8'h0; V3_m <= 8'h0; V1_m <= 8'h0; 
+		V1_p <= 8'h0; V3_p <= 8'h0; V5_p <= 8'h0; V7_p <= 8'h0; V9_p <= 8'h0;
+
+		Ye <= 8'h0;
+		Yo <= 8'h0;
+
+		M0 <= 32'h0;
+		M1 <= 32'h0;
+		M2 <= 32'h0;
+		M3 <= 32'h0;
+
+		M0_buff <= 32'h0;
+		M1_buff <= 32'h0;
+		M2_buff <= 32'h0;
+		M3_buff <= 32'h0;
+
+		Uodd <= 8'h0;
+		Vodd <= 8'h0;
+
+		U_prime_even <= 8'h0;
+		V_prime_even <= 8'h0;
+		accU_prime <= 32'h0; ////prime_odd on third partial removed from state table to conserve registers
+		accV_prime <= 32'h0;
+	
+		Re <= 8'h0;
+		Ro <= 8'h0;
+		Ge <= 8'h0;
+		Go <= 8'h0;
+		Be <= 8'h0;
+		Bo <= 8'h0;
+		
+		memory_Y <= base_memory_Y;
+		memory_U <= base_memory_U;
+		memory_V <= base_memory_V;
+		memory_RGB <= base_memory_RGB;
+
+		even_cycle <= 1'b1;
+		pixel_compute_counter <= 8'h0;
+		
+	end else begin
+			case (M1_state)
+			S_IDLE: begin
+			finish <= 1'd0;32'd36
+					if (start == 1'b1) begin
+					M1_state <= S_LEADIN0;
+					end
+			end
+ 
+
+			S_LEAD_IN0: begin
+					SRAM_address <= memory_U + memory_offset_UV; //U0U1
+					SRAM_we_n <= 1'b1;
+					M1_state <= S_LEADIN1;
+			end
+			
+			S_LEAD_IN1: begin
+					SRAM_address <= memory_V + memory_offset_UV; //V0V1
+					
+					memory_offset_UV <= memory_offset_UV + 1'b1;  //Always read U and V same time can be one offset reg
+					
+					M1_state <= S_LEADIN2;          					
+			end
+			
+			S_LEAD_IN2: begin
+					SRAM_address <= memory_U + memory_offset_UV;  //U2U3
+					
+					U9_m <= SRAM_read_data[15:8]; 	
+					U7_m <= SRAM_read_data[15:8]; 
+					U5_m <= SRAM_read_data[15:8];  
+					U3_m <= SRAM_read_data[15:8]; 
+					U1_m <= SRAM_read_data[15:8];
+					U1_p <= SRAM_read_data[7:0];
+					
+					M1_state <= S_LEAD_IN3;			
+			end
+
+			S_LEAD_IN3: begin
+					SRAM_address <= memory_V + memory_offset_UV;  //V2V3
+					
+					V9_m <= SRAM_read_data[15:8]; 
+					V7_m <= SRAM_read_data[15:8]; 
+					V5_m <= SRAM_read_data[15:8];  
+					V3_m <= SRAM_read_data[15:8]; 
+					V1_m <= SRAM_read_data[15:8];
+					V1_p <= SRAM_read_data[7:0];
+					
+					memory_offset_UV <= memory_offset_UV + 1'b1;
+					
+					M1_state <= S_LEAD_IN4;				
+			end
+			
+			S_LEAD_IN4: begin
+					SRAM_address <= memory_U + memory_offset_UV;  //U4U5
+					
+					U3_p <= SRAM_read_data[15:8];
+					U5_p <= SRAM_read_data[7:0];  
+										U9_m <= U7_m;	
+					U7_m <= U5_m;
+					U5_m <= U3_m; 
+					U3_m <= U1_m;
+					U1_m <= U1_p;
+					U1_p <= V3_p;
+					V3_p <= V5_p;
+					V5_p <= V7_p;  
+					V7_p <= V9_p ;  
+					V9_p <= SRAM_read_data[15:8];  
+					M1_state <= _LEAD_IN5;				
+			end
+			
+			S_LEAD_IN5: begin
+					SRAM_address <= memory_V + memory_offset_UV; //V4V5
+					
+					V3_p <= SRAM_read_data[15:8];
+					V5_p <= SRAM_read_data[7:0];  
+					
+					memory_offset_UV <= memory_offset_UV + 1'b1;
+					
+					M1_state <= S_LEAD_IN6;				
+			end
+			
+			S_LEAD_IN6: begin 
+					SRAM_address <= memory_Y + memory_offset_Y; //Y0Y1
+					
+					U7_p <= SRAM_read_data[15:8];
+					U9_p <= SRAM_read_data[7:0];  
+					
+					memory_offset_Y <= memory_offset_Y + 1'b1;
+						
+					M1_state <= S_LEAD_IN7;				
+			end
+			
+			S_LEAD_IN7: begin
+
+					V7_p <= SRAM_read_data[15:8];
+					V9_p <= SRAM_read_data[7:0];  
+					
+					memory_offset_UV <= memory_offset_UV + 1'b1;
+
+					M1_state <= S_LEAD_IN8;				
+			end
+			
+			S_LEAD_IN8: begin
+				
+					Ye <= SRAM_read_data[15:8];
+					Yo <= SRAM_read_data[7:0];
+		
+					memory_offset_Y <= memory_offset_Y + 1'b1;
+
+					M1_state <= S_COMMON_0;				
+			end
+		
+///////////////End of lead in state3s//////////////////////		
+
+		
+			S_COMMON_0: begin
+					SRAM_address <= memory_RGB + memory_offset_RGB;
+
+					accU_prime <= M0 - M1 - M2 + M3;
+
+
+					SRAM_write_data <= {Re, Ge}; //writing ReGe
+
+
+					V_prime_even <= V1_m;
+					if(!new_row)
+					SRAM_we_n <= 1'b0;
+
+					memory_offset_RGB <= memory_offset_RGB + 1'b1;
+									
+					M1_state <= S_COMMON_1;
+			end
+			
+			S_COMMON_1: begin
+					SRAM_address <= memory_RGB + memory_offset_RGB;
+					
+					memory_offset_RGB <= memory_offset_RGB + 1'b1;
+					
+					
+					///Mipliers
+					
+					
+					accU_prime <= M0 + M1 + M2 - M3 + accU_prime;
+					
+					SRAM_write_data <= {Be, Ro}; //writing BeRo
+					
+					M1_state <= S_COMMON_2;          					
+			end
+			
+			S_COMMON_2: begin
+					SRAM_address <= memory_RGB + memory_offset_RGB;
+
+					memory_offset_RGB <= memory_offset_RGB + 1'b1;
+					SRAM_write_data <= {Go,Bo}; //writing GoBo
+					
+					///Mipliers
+					
+					accU_prime <= (accU_prime - M0 + M1 + 32'sd2048) >>> 12; //This is U'odd and need to clip
+					accV_prime <= M2 - M3;
+					new_row <= 1'b0;
+					
+					pixel_compute_counter <= pixel_compute_counter + 2'b2;
+					M1_state <= S_COMMON_3;			
+			end
+
+			S_COMMON_3: begin
+					if(even_cycle && pixel_compute_counter < 182) begin
+						SRAM_address <= memory_U + memory_offset_UV;  //UeUo
+					end 
+					
+					
+				
+					
+					SRAM_we_n <= 1'b1;
+					
+					accV_prime <= -M0 + M1 + M2 + M3 + accV_prime;
+
+					
+					M1_state <= S_COMMON_4;				
+			end
+			
+			S_COMMON_4: begin
+					if(even_cycle && pixel_compute_counter < 182) begin //Stop reading from U and V
+					SRAM_address <= memory_V + memory_offset_UV;  //VeVo
+					memory_offset_UV <= memory_offset_UV + 1'b1;
+					end 
+					
+							
+					
+					
+					accV_prime <= M0 - M1 - M2 + M3 + accV_prime; //This is V'odd
+					
+					M1_state <= S_COMMON_5;				
+			end
+			
+			S_COMMON_5: begin
+					SRAM_address <= memory_Y + memory_offset_Y;  //YeYo
+					
+					U9_m <= U7_m;	
+					U7_m <= U5_m;
+					U5_m <= U3_m; 
+					U3_m <= U1_m;
+					U1_m <= U1_p;
+					U1_p <= U3_p;
+					U3_p <= U5_p;
+					U5_p <= U7_p;  
+					U7_p <= U9_p ;  
+					if(even_cycle && pixel_compute_counter < 182) begin
+						U9_p <= SRAM_read_data[15:8];
+						Uodd <= SRAM_read_data[7:0]; 
+					end else if(!even_cycle && pixel_compute_counter < 180) begin
+						U9_p <= Uodd;
+					end
+			
+				
+					M0_buff <= M0;
+					M1_buff <= M1;
+					M2_buff <= M2;
+					M3_buff <= M3;
+
+					memory_offset_Y <= memory_offset_Y + 1'b1;	
+					M1_state <= S_COMMON_6;				
+			end
+			
+			S_COMMON_6: begin 
+					
+					V9_m <= V7_m;	
+					V7_m <= V5_m;
+					V5_m <= V3_m; 
+					V3_m <= V1_m;
+					V1_m <= V1_p;
+					V1_p <= V3_p;
+					V3_p <= V5_p;
+					V5_p <= V7_p;  
+					V7_p <= V9_p;  
+					if(even_cycle && pixel_compute_counter < 182) begin
+						V9_p <= SRAM_read_data[15:8];
+						Vodd <= SRAM_read_data[7:0]; 
+					end else if(!even_cycle && pixel_compute_counter < 180) begin
+						V9_p <= Vodd;
+					end
+
+		
+					Re <= (M0_buff + M1 + 32'sd16384) >>> 15;
+					Ro <= (M1_buff + M2 + 32'sd16384) >>> 15;
+					Ge <= (M0_buff - M2_buff - M3 + 32'sd16384) >>> 15;
+					Be <= (M0_buff + M0 + 32'sd16384) >>> 15;
+										
+					
+					
+					M1_state <= S_COMMON_7;				
+			end
+			
+			S_COMMON_7: begin
+			
+					Ye <= SRAM_read_data[15:8];
+					Yo <= SRAM_read_data[7:0];
+					
+
+					Go <= (M1_buff - M3_buff - M0 + 32'sd16384) >>> 15;
+					Bo <= (M1_buff + M1 + 32'sd16384) >>> 15;
+
+					U_prime_even <= U1_m;
+					
+					even_cycle <= !even_cycle;
+					M1_state <= S_COMMON_0;				
+			end
+			
+			
+/////////////////////End of common cases///////////////////////
+
+
+			S_LEAD_OUT0: begin
+					SRAM_address <= memory_RGB + memory_offset_RGB;
+
+					SRAM_write_data <= {Be, Ro}; //writing BeRo
+
+					memory_offset_RGB <= memory_offset_RGB + 1'b1;
+					
+					M1_state <= S_LEAD_OU1;				
+			end
+
+			S_LEAD_OU1: begin
+			
+					SRAM_write_data <= {Be, Ro}; //writing BeRo
+
+					memory_offset_RGB <= memory_offset_RGB + 1'b1;
+					
+					M1_state <= S_LEAD_OU2;
+			end
+
+			S_LEAD_OUT2: begin
+			
+
+
+					M1_state <= S_LEAD_IN0;		
+					new_row <= 1'b1;		
+			end
+
+			
+
+			default: M1_state <= S_IDLE;
+			endcase
+		end
+	end
+
+
+
+
+////////////////// Multipler logic //////////////
+
+logic signed [63:0] M0_result, M1_result, M2_result, M3_result;
+
+assign M0 = M0_result[31:0];
+assign M1 = M1_result[31:0];
+assign M2 = M2_result[31:0];
+assign M3 = M3_result[31:0];
+
+assign M0_result = $signed(M0_op_1) * $signed(M0_op_2);
+assign M1_result = $signed(M1_op_1) * $signed(M1_op_2);
+assign M2_result = $signed(M2_op_1) * $signed(M2_op_2);
+assign M3_result = $signed(M3_op_1) * $signed(M3_op_2);
+
+
+always_comb begin
+  // defaults
+  M0_op_1 = 32'sd0; M0_op_2 = 32'sd0;
+  M1_op_1 = 32'sd0; M1_op_2 = 32'sd0;
+  M2_op_1 = 32'sd0; M2_op_2 = 32'sd0;
+  M3_op_1 = 32'sd0; M3_op_2 = 32'sd0;
+
+  
+  if (M1_state == S_COMMON_0) begin
+  // U' partial taps (raw bytes → zero-extend only)
+  M0_op_1 = 32'sd36;   M0_op_2 = {24'd0, U9_m};
+  M1_op_1 = 32'sd98;   M1_op_2 = {24'd0, U7_m};
+  M2_op_1 = 32'sd233;  M2_op_2 = {24'd0, U5_m};
+  M3_op_1 = 32'sd528;  M3_op_2 = {24'd0, U3_m};
+
+  end else if (M1_state == S_COMMON_1) begin
+  M0_op_1 = 32'sd1815; M0_op_2 = {24'd0, U1_m};
+  M1_op_1 = 32'sd1815; M1_op_2 = {24'd0, U1_p};
+  M2_op_1 = 32'sd528;  M2_op_2 = {24'd0, U3_p};
+  M3_op_1 = 32'sd233;  M3_op_2 = {24'd0, U5_p};
+
+  end else if (M1_state == S_COMMON_2) begin
+  M0_op_1 = 32'sd98;   M0_op_2 = {24'd0, U7_p};
+  M1_op_1 = 32'sd36;   M1_op_2 = {24'd0, U9_p};
+  M2_op_1 = 32'sd36;   M2_op_2 = {24'd0, V9_m};
+  M3_op_1 = 32'sd98;   M3_op_2 = {24'd0, V7_m};
+
+  end else if (M1_state == S_COMMON_3) begin
+  M0_op_1 = 32'sd233;  M0_op_2 = {24'd0, V5_m};
+  M1_op_1 = 32'sd528;  M1_op_2 = {24'd0, V3_m};
+  M2_op_1 = 32'sd1815; M2_op_2 = {24'd0, V1_m};
+  M3_op_1 = 32'sd1815; M3_op_2 = {24'd0, V1_p};
+
+  end else if (M1_state == S_COMMON_4) begin
+  M0_op_1 = 32'sd528;  M0_op_2 = {24'd0, V3_p};
+  M1_op_1 = 32'sd233;  M1_op_2 = {24'd0, V5_p};
+  M2_op_1 = 32'sd98;   M2_op_2 = {24'd0, V7_p};
+  M3_op_1 = 32'sd36;   M3_op_2 = {24'd0, V9_p};
+
+  end else if (M1_state == S_COMMON_5) begin
+  // Y-16 is non-negative | U/V centered can be negative so keep signed casts
+  M0_op_1 = 32'sd38142; M0_op_2 = ({24'd0, Ye}) - 32'sd16;             // stays >= 0?? check
+  M1_op_1 = 32'sd38142; M1_op_2 = ({24'd0, Yo}) - 32'sd16;             // stays >= 0?? checl
+  M2_op_1 = 32'sd12845; M2_op_2 = ($signed({24'd0, U_prime_even}) - 32'sd128);
+  M3_op_1 = 32'sd12845; M3_op_2 = ($signed(accU_prime)             - 32'sd128);
+
+  end else if (M1_state == S_COMMON_6) begin
+  M0_op_1 = 32'sd66093; M0_op_2 = ($signed({24'd0, U_prime_even}) - 32'sd128);
+  M1_op_1 = 32'sd52298; M1_op_2 = ($signed({24'd0, V_prime_even}) - 32'sd128);  
+  M2_op_1 = 32'sd52298; M2_op_2 = ($signed(accV_prime)            - 32'sd128);  
+  M3_op_1 = 32'sd26640; M3_op_2 = ($signed({24'd0, U_prime_even}) - 32'sd128);
+
+  end else if (M1_state == S_COMMON_7) begin
+  M0_op_1 = 32'sd26640; M0_op_2 = ($signed(accV_prime) - 32'sd128);
+  M1_op_1 = 32'sd66093; M1_op_2 = ($signed(accU_prime) - 32'sd128);
+  end
+
+end
+
+
+
+endmodule
